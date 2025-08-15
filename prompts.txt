@@ -1,0 +1,9 @@
+MENTOR CREATOR:
+
+pmpt_687fdc2e9d988197b78d6d9ec73ed7b9007fa912406f701eresponse = client.responses.create(
+  prompt={
+    "id": "pmpt_687fdc2e9d988197b78d6d9ec73ed7b9007fa912406f701e",
+    "version": "1"
+  }
+)
+

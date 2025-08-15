@@ -1,0 +1,44 @@
+version: "3.8"
+
+services:
+  xray:
+    image: teddysun/xray
+    restart: unless-stopped
+    volumes:
+      - ./xray-config.json:/etc/xray/config.json:ro
+    expose:
+      - "1080"   # видно только соседям по сети Docker
+    # healthcheck убрал, т.к. в образе нет nc. Если надо — скажу как добавить.
+
+  bot:
+    build: .
+    restart: always
+    env_file: .env
+    depends_on:
+      xray:
+        condition: service_started
+      redis:
+        condition: service_started
+      qdrant:
+        condition: service_started
+    # если боту нужен прокси только для OpenAI — НЕ задавай глобально ALL_PROXY здесь
+
+  redis:
+    image: redis:7-alpine
+    restart: always
+    env_file: .env
+    ports:
+      - "${REDIS_PORT:-6379}:${REDIS_PORT:-6379}"
+    expose:
+      - "${REDIS_PORT:-6379}"
+
+  qdrant:
+    image: qdrant/qdrant
+    restart: always
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+
+volumes:
+  qdrant_data:

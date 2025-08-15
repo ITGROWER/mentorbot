@@ -1,0 +1,15 @@
+[Unit]
+Description=Bot Template
+After=multi-user.target
+
+[Service]
+User=root
+Group=admin
+Type=simple
+WorkingDirectory=/home/aiogram_v3_template
+ExecStart=/home/aiogram_v3_template/.venv/bin/python -m tgbot
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
