@@ -32,9 +32,9 @@ async def start_buy_sub(callback_query: CallbackQuery, state: FSMContext):
             return
         try:
             splitconfig = config.provider_config.token.split(":")[1]
-        except Exception as e:
-            logger.error(e)
-            splitconfig = []
+        except (IndexError, AttributeError) as e:
+            logger.error(f"Failed to parse provider token: {e}")
+            splitconfig = ""
         if splitconfig == "TEST":
             await callback_query.message.reply(
                 "Для оплаты используйте данные тестовой карты: 1111 1111 1111 1026, 12/22, CVC 000."

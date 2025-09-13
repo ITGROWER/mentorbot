@@ -26,9 +26,17 @@ class DBUserMiddleware(BaseMiddleware):
         user = await repo.users.get(telegram_id=aiogram_user.id)
 
         if user is None:
-            user = DBUser.from_aiogram(aiogram_user)
-            await repo.users.create(user)
-            await session.commit()
+            try:
+                user = DBUser.from_aiogram(aiogram_user)
+                await repo.users.create(user)
+                await session.commit()
+            except Exception as e:
+                # Handle race condition: user might have been created by another request
+                await session.rollback()
+                user = await repo.users.get(telegram_id=aiogram_user.id)
+                if user is None:
+                    # If still None after rollback, re-raise the exception
+                    raise e
         if user.is_ban:
             if event.message:
                 await event.message.answer("Вы заблокированы")
