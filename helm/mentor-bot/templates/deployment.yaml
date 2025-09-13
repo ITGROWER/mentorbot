@@ -1,0 +1,125 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mentor-bot.fullname" . }}
+  labels:
+    {{- include "mentor-bot.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "mentor-bot.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "mentor-bot.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "mentor-bot.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+          # Common configuration
+          - name: COMMON_BOT_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: {{ include "mentor-bot.fullname" . }}-secrets
+                key: COMMON_BOT_TOKEN
+          - name: COMMON_ENCRYPTION_KEY
+            valueFrom:
+              secretKeyRef:
+                name: {{ include "mentor-bot.fullname" . }}-secrets
+                key: COMMON_ENCRYPTION_KEY
+          - name: COMMON_ADMINS
+            valueFrom:
+              secretKeyRef:
+                name: {{ include "mentor-bot.fullname" . }}-secrets
+                key: COMMON_ADMINS
+          - name: COMMON_ENCRYPTION_ON
+            value: "{{ .Values.config.common.encryptionOn }}"
+          # PostgreSQL configuration
+          - name: POSTGRES_HOST
+            value: "{{ .Values.config.postgres.host }}"
+          - name: POSTGRES_PORT
+            value: "{{ .Values.config.postgres.port }}"
+          - name: POSTGRES_USER
+            value: "{{ .Values.config.postgres.user }}"
+          - name: POSTGRES_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: {{ include "mentor-bot.fullname" . }}-secrets
+                key: POSTGRES_PASSWORD
+          - name: POSTGRES_DB
+            value: "{{ .Values.config.postgres.db }}"
+          - name: POSTGRES_ENABLE_LOGGING
+            value: "{{ .Values.config.postgres.enableLogging }}"
+          # Redis configuration
+          - name: REDIS_USE_REDIS
+            value: "{{ .Values.config.redis.useRedis }}"
+          - name: REDIS_HOST
+            value: "{{ .Values.config.redis.host }}"
+          - name: REDIS_PORT
+            value: "{{ .Values.config.redis.port }}"
+          - name: REDIS_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: {{ include "mentor-bot.fullname" . }}-secrets
+                key: REDIS_PASSWORD
+          # Provider configuration
+          - name: PROVIDER_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: {{ include "mentor-bot.fullname" . }}-secrets
+                key: PROVIDER_TOKEN
+          - name: PROVIDER_CURRENCY
+            value: "{{ .Values.config.provider.currency }}"
+          - name: PROVIDER_PRICE
+            value: "{{ .Values.config.provider.price }}"
+          - name: PROVIDER_MENTOR_PRICE
+            value: "{{ .Values.config.provider.mentorPrice }}"
+          - name: PROVIDER_ENABLED
+            value: "{{ .Values.config.provider.enabled }}"
+          # OpenAI configuration
+          - name: OPENAI_API_KEY
+            valueFrom:
+              secretKeyRef:
+                name: {{ include "mentor-bot.fullname" . }}-secrets
+                key: OPENAI_API_KEY
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          livenessProbe:
+            exec:
+              command:
+              - python
+              - -c
+              - "import requests; requests.get('https://api.telegram.org/bot' + '$COMMON_BOT_TOKEN' + '/getMe')"
+            initialDelaySeconds: 30
+            periodSeconds: 60
+          readinessProbe:
+            exec:
+              command:
+              - python
+              - -c
+              - "import requests; requests.get('https://api.telegram.org/bot' + '$COMMON_BOT_TOKEN' + '/getMe')"
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      restartPolicy: Always

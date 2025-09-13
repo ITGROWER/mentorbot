@@ -1,0 +1,50 @@
+# Мониторинг и логирование для MentorBot
+apiVersion: v1
+kind: ServiceMonitor
+metadata:
+  name: mentor-bot-monitor
+  namespace: mentor-bot
+  labels:
+    app: mentor-bot
+spec:
+  selector:
+    matchLabels:
+      app: mentor-bot
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: 30s
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mentor-bot-metrics
+  namespace: mentor-bot
+  labels:
+    app: mentor-bot
+spec:
+  selector:
+    app: mentor-bot
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mentor-bot
+  namespace: mentor-bot
+spec:
+  template:
+    spec:
+      containers:
+      - name: mentor-bot
+        ports:
+        - name: http
+          containerPort: 8080
+          protocol: TCP
+        env:
+        - name: PROMETHEUS_MULTIPROC_DIR
+          value: "/tmp"
+        # Добавьте метрики в код приложения для Prometheus

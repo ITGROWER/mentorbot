@@ -1,0 +1,129 @@
+# Default values for mentor-bot
+replicaCount: 1
+
+image:
+  repository: ghcr.io/YOUR_USERNAME/mentor-bot
+  pullPolicy: IfNotPresent
+  tag: "latest"
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+
+podSecurityContext: {}
+
+securityContext: {}
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: mentor-bot.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 250m
+    memory: 256Mi
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 100
+  targetCPUUtilizationPercentage: 80
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+# Bot configuration
+config:
+  common:
+    encryptionOn: true
+  postgres:
+    host: "postgres-service"
+    port: 5432
+    db: "mentorbot"
+    user: "mentorbot"
+    enableLogging: false
+  redis:
+    useRedis: true
+    host: "redis-service"
+    port: 6379
+  provider:
+    currency: "RUB"
+    price: 1000
+    mentorPrice: 500
+    enabled: true
+
+# Secrets (should be provided via external secret management)
+secrets:
+  common:
+    botToken: ""
+    encryptionKey: ""
+    admins: "[]"
+  postgres:
+    password: ""
+  redis:
+    password: ""
+  provider:
+    token: ""
+  openai:
+    apiKey: ""
+
+# Dependencies
+postgres:
+  enabled: true
+  persistence:
+    enabled: true
+    size: 10Gi
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 250m
+      memory: 256Mi
+
+redis:
+  enabled: true
+  resources:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+qdrant:
+  enabled: true
+  persistence:
+    enabled: true
+    size: 5Gi
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 250m
+      memory: 256Mi

@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mentor-bot-config
+  namespace: mentor-bot
+data:
+  # Redis configuration
+  REDIS_HOST: "redis-service"
+  REDIS_PORT: "6379"
+  REDIS_USE_REDIS: "true"
+  
+  # PostgreSQL configuration
+  POSTGRES_HOST: "postgres-service"
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: "mentorbot"
+  POSTGRES_USER: "mentorbot"
+  POSTGRES_ENABLE_LOGGING: "false"
+  
+  # Qdrant configuration
+  QDRANT_HOST: "qdrant-service"
+  QDRANT_PORT: "6333"
+  
+  # Common configuration
+  COMMON_ENCRYPTION_ON: "true"
+  
+  # Provider configuration
+  PROVIDER_CURRENCY: "RUB"
+  PROVIDER_PRICE: "1000"
+  PROVIDER_MENTOR_PRICE: "500"
+  PROVIDER_ENABLED: "true"

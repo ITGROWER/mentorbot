@@ -1,0 +1,18 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mentor-bot
+  namespace: mentor-bot
+spec:
+  replicas: 2
+  template:
+    spec:
+      containers:
+      - name: mentor-bot
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
