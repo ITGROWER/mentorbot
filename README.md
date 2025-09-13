@@ -1,233 +1,254 @@
-# Манифесты k3s с секретами
+# Манифесты для k3s с секретами
 
-Этот репозиторий содержит примеры манифестов Kubernetes для работы с секретами в k3s.
+Этот репозиторий содержит примеры Kubernetes манифестов для работы с секретами в k3s кластере.
 
-## Файлы
+## Обзор файлов
 
-- `secret-examples.yaml` - базовые примеры создания и использования секретов
-- `secret-best-practices.yaml` - продвинутые примеры с лучшими практиками безопасности
+- `secrets-manifest.yaml` - Основные примеры различных типов секретов
+- `configmap-with-secrets.yaml` - Пример совместного использования ConfigMap и Secret
 
 ## Типы секретов
 
-### 1. Opaque секреты
-Самый распространенный тип секретов для хранения произвольных данных:
+### 1. Opaque Secret
+Базовый тип секрета для произвольных данных:
 ```yaml
 apiVersion: v1
 kind: Secret
 metadata:
-  name: my-secret
+  name: app-secrets
 type: Opaque
 data:
-  username: YWRtaW4=  # base64 encoded
-  password: cGFzc3dvcmQ=
+  username: YWRtaW4=  # base64: admin
+  password: cGFzc3dvcmQxMjM=  # base64: password123
 ```
 
-### 2. TLS секреты
-Для хранения сертификатов и ключей:
+### 2. Docker Registry Secret
+Для аутентификации с приватными Docker registry:
+```yaml
+type: kubernetes.io/dockerconfigjson
+```
+
+### 3. TLS Secret
+Для хранения SSL/TLS сертификатов:
 ```yaml
 type: kubernetes.io/tls
 data:
-  tls.crt: <base64-encoded-cert>
-  tls.key: <base64-encoded-key>
+  tls.crt: <base64-certificate>
+  tls.key: <base64-private-key>
 ```
 
-### 3. Docker registry секреты
-Для аутентификации в Docker registry:
+### 4. SSH Auth Secret
+Для SSH ключей:
 ```yaml
-type: kubernetes.io/dockerconfigjson
+type: kubernetes.io/ssh-auth
 data:
-  .dockerconfigjson: <base64-encoded-docker-config>
+  ssh-privatekey: <base64-ssh-key>
+```
+
+### 5. Basic Auth Secret
+Для HTTP Basic Authentication:
+```yaml
+type: kubernetes.io/basic-auth
+data:
+  username: <base64-username>
+  password: <base64-password>
 ```
 
 ## Способы использования секретов
 
-### Переменные окружения
+### 1. Переменные окружения
 ```yaml
 env:
-- name: PASSWORD
+- name: DB_PASSWORD
   valueFrom:
     secretKeyRef:
-      name: my-secret
+      name: app-secrets
       key: password
 ```
 
-### Файлы через volume
+### 2. Загрузка всех ключей из ConfigMap/Secret
+```yaml
+envFrom:
+- secretRef:
+    name: app-secrets
+- configMapRef:
+    name: app-config
+```
+
+### 3. Монтирование как файлы
 ```yaml
 volumeMounts:
 - name: secret-volume
-  mountPath: /etc/secrets
+  mountPath: "/etc/secrets"
+  readOnly: true
+
 volumes:
 - name: secret-volume
   secret:
-    secretName: my-secret
+    secretName: app-secrets
+    defaultMode: 0600
+```
+
+### 4. ImagePullSecrets
+```yaml
+spec:
+  imagePullSecrets:
+  - name: docker-registry-secret
 ```
 
 ## Команды для работы с секретами
 
 ### Создание секрета из командной строки
 ```bash
-# Создание секрета из литералов
-kubectl create secret generic my-secret \
+# Создание секрета с данными
+kubectl create secret generic app-secrets \
   --from-literal=username=admin \
-  --from-literal=password=password
+  --from-literal=password=password123
 
-# Создание секрета из файлов
-kubectl create secret generic my-secret \
-  --from-file=username.txt \
-  --from-file=password.txt
+# Создание Docker registry секрета
+kubectl create secret docker-registry docker-registry-secret \
+  --docker-server=registry.example.com \
+  --docker-username=username \
+  --docker-password=password
 
 # Создание TLS секрета
 kubectl create secret tls tls-secret \
-  --cert=path/to/cert.crt \
-  --key=path/to/key.key
-
-# Создание Docker registry секрета
-kubectl create secret docker-registry registry-secret \
-  --docker-server=registry.example.com \
-  --docker-username=user \
-  --docker-password=password \
-  --docker-email=user@example.com
+  --cert=path/to/tls.crt \
+  --key=path/to/tls.key
 ```
 
-### Кодирование в base64
+### Кодирование данных в base64
 ```bash
-echo -n 'admin' | base64
-echo -n 'password' | base64
-```
+# Кодирование строки
+echo -n "password123" | base64
 
-### Применение манифестов
-```bash
-# Применить базовые примеры
-kubectl apply -f secret-examples.yaml
-
-# Применить продвинутые примеры
-kubectl apply -f secret-best-practices.yaml
+# Декодирование
+echo "cGFzc3dvcmQxMjM=" | base64 -d
 ```
 
 ### Просмотр секретов
 ```bash
-# Список секретов
+# Список всех секретов
 kubectl get secrets
 
 # Подробная информация о секрете
-kubectl describe secret my-secret
+kubectl describe secret app-secrets
 
-# Получить значение секрета (декодированное)
-kubectl get secret my-secret -o jsonpath="{.data.username}" | base64 --decode
+# Получение значения из секрета (декодированное)
+kubectl get secret app-secrets -o jsonpath="{.data.password}" | base64 -d
 ```
 
-## Лучшие практики
+## Развертывание в k3s
 
-1. **Используйте namespaces** для изоляции секретов
-2. **Настройте RBAC** для ограничения доступа к секретам
-3. **Используйте ServiceAccount** для подов, которые работают с секретами
-4. **Не включайте секреты в Docker образы**
-5. **Ротируйте секреты регулярно**
-6. **Используйте внешние системы управления секретами** (HashiCorp Vault, AWS Secrets Manager)
+### 1. Применение манифестов
+```bash
+# Применить основные секреты
+kubectl apply -f secrets-manifest.yaml
+
+# Применить пример с ConfigMap
+kubectl apply -f configmap-with-secrets.yaml
+```
+
+### 2. Проверка статуса
+```bash
+# Проверить поды
+kubectl get pods
+
+# Проверить логи
+kubectl logs -l app=app-with-secrets
+
+# Проверить переменные окружения в поде
+kubectl exec -it <pod-name> -- env | grep DB_
+
+# Проверить смонтированные файлы
+kubectl exec -it <pod-name> -- ls -la /etc/secrets/
+```
 
 ## Безопасность
 
-- Секреты хранятся в etcd в base64 кодировке (не зашифрованы!)
-- Для k3s рекомендуется включить шифрование etcd:
-```bash
-k3s server --secrets-encryption
-```
+### Лучшие практики:
+1. **Никогда не коммитьте секреты в Git** - используйте tools как Sealed Secrets или External Secrets
+2. **Используйте RBAC** для ограничения доступа к секретам
+3. **Регулярно ротируйте** секреты
+4. **Используйте минимальные права** для сервисных аккаунтов
+5. **Мониторьте доступ** к секретам
 
-- Ограничьте доступ к API серверу
-- Используйте Network Policies для ограничения сетевого доступа
-- Регулярно аудируйте доступ к секретам
-
-## Примеры использования
-
-### Веб-приложение с базой данных
+### Настройка RBAC для секретов:
 ```yaml
-# Секрет с данными для подключения к БД
-apiVersion: v1
-kind: Secret
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
 metadata:
-  name: db-secret
-type: Opaque
-data:
-  username: <base64-encoded-user>
-  password: <base64-encoded-password>
-  host: <base64-encoded-host>
-
+  name: secret-reader
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get", "list"]
 ---
-# Deployment приложения
-apiVersion: apps/v1
-kind: Deployment
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
 metadata:
-  name: web-app
-spec:
-  template:
-    spec:
-      containers:
-      - name: app
-        image: my-web-app:latest
-        env:
-        - name: DB_USERNAME
-          valueFrom:
-            secretKeyRef:
-              name: db-secret
-              key: username
-        - name: DB_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: db-secret
-              key: password
-        - name: DB_HOST
-          valueFrom:
-            secretKeyRef:
-              name: db-secret
-              key: host
+  name: secret-reader-binding
+subjects:
+- kind: ServiceAccount
+  name: app-service-account
+roleRef:
+  kind: Role
+  name: secret-reader
+  apiGroup: rbac.authorization.k8s.io
 ```
 
-### HTTPS сервис с TLS
-```yaml
-apiVersion: v1
-kind: Service
-metadata:
-  name: secure-service
-spec:
-  type: LoadBalancer
-  ports:
-  - port: 443
-    targetPort: 8080
-  selector:
-    app: secure-app
+## Troubleshooting
 
----
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: secure-ingress
-spec:
-  tls:
-  - hosts:
-    - myapp.example.com
-    secretName: tls-secret
-  rules:
-  - host: myapp.example.com
-    http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: secure-service
-            port:
-              number: 443
-```
+### Частые проблемы:
 
-## Мониторинг и отладка
+1. **Secret не найден**
+   ```bash
+   kubectl get secrets -n <namespace>
+   ```
 
+2. **Неправильное кодирование base64**
+   ```bash
+   echo -n "your-string" | base64
+   ```
+
+3. **Проблемы с правами доступа к файлам**
+   ```yaml
+   defaultMode: 0600  # или нужные права
+   ```
+
+4. **ImagePullBackOff с Docker registry**
+   ```bash
+   kubectl describe pod <pod-name>
+   # Проверить imagePullSecrets
+   ```
+
+### Дебаггинг:
 ```bash
-# Проверить, используется ли секрет
-kubectl get pods -o yaml | grep -A 10 -B 10 secretKeyRef
+# Проверить события
+kubectl get events --sort-by=.metadata.creationTimestamp
 
-# Проверить монтирование секретов
-kubectl exec -it <pod-name> -- ls -la /etc/secrets/
+# Детальная информация о поде
+kubectl describe pod <pod-name>
 
-# Логи подов с проблемами доступа к секретам
-kubectl logs <pod-name> | grep -i secret
+# Логи контейнера
+kubectl logs <pod-name> -c <container-name>
+```
+
+## Дополнительные инструменты
+
+### Sealed Secrets
+Для шифрования секретов в Git:
+```bash
+# Установка
+kubectl apply -f https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.18.0/controller.yaml
+
+# Создание sealed secret
+kubeseal -f secret.yaml -w sealedsecret.yaml
+```
+
+### External Secrets Operator
+Для интеграции с внешними системами управления секретами (Vault, AWS Secrets Manager):
+```bash
+helm repo add external-secrets https://charts.external-secrets.io
+helm install external-secrets external-secrets/external-secrets -n external-secrets-system --create-namespace
 ```
