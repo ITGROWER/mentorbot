@@ -1,3 +1,16 @@
+"""
+Core user interaction handlers for the MentorBot.
+
+This module contains the main user-facing functionality including:
+- User registration and onboarding
+- Mentor creation and management
+- Conversation handling with AI mentors
+- Subscription and payment integration
+- User state management
+
+All handlers are filtered to work only in private chats.
+"""
+
 import json
 from datetime import datetime
 from aiogram import F, Router
@@ -43,8 +56,20 @@ from tgbot.texts import (
     PAYMENTS_DISABLED_TEXT,
     NEW_MENTOR_BUTTON_TEXT,
 )
+from tgbot.misc.exceptions import (
+    UserNotFoundError,
+    MentorNotFoundError,
+    SubscriptionExpiredError,
+    SubscriptionLimitReachedError,
+    UserBannedError,
+    AIServiceError,
+)
+from tgbot.misc.error_handler import error_handler_decorator
 
+# Create router for user handlers
 user_router = Router()
+
+# Filter handlers to only work in private chats
 user_router.message.filter(F.chat.type == ChatType.PRIVATE)
 user_router.callback_query.filter(F.message.chat.type == ChatType.PRIVATE)
 
@@ -55,30 +80,55 @@ async def user_start(
     state: FSMContext,
     repo: Repository,
 ) -> None:
+    """
+    Handle the /start command for user onboarding and navigation.
+    
+    This is the main entry point for users interacting with the bot. It handles:
+    - New user registration flow
+    - Returning user navigation
+    - Banned user handling
+    - Mentor availability checks
+    - Subscription status validation
+    
+    Args:
+        message: The Telegram message object containing user information
+        state: FSM context for managing user conversation state
+        repo: Database repository for user and mentor data access
+    """
+    # Clear any existing state to start fresh
     await state.clear()
-    logger.info(message)
+    logger.info(f"User {message.from_user.id} started the bot")
 
+    # Get or create user record
     user = await repo.users.get(telegram_id=message.from_user.id)
+    
+    # Check if user is banned
     if user.is_ban:
-        await message.answer("Вы заблокированы")
+        await message.answer("You are banned from using this bot")
         await state.clear()
         return
-    # TODO сделать инфо о последнем менторе
+    
+    # Handle returning registered users
     if user.is_reg:
+        # Check if user has any mentors
         mentors = await repo.mentors.get_all(user_id=user.id)
         if mentors:
+            # User has mentors, start conversation mode
             await message.answer(WELCOME_BACK_MESSAGE, reply_markup=ReplyKeyboardRemove())
             await state.set_state(DialogueWithMentor.process)
         else:
+            # User is registered but has no mentors
+            # Check if they have an active subscription
             active_sub = (
                 user.is_sub and user.sub_until and user.sub_until > datetime.utcnow()
             )
             if active_sub:
+                # User has active subscription, offer to create new mentor
                 kb = InlineKeyboardMarkup(
                     inline_keyboard=[
                         [
                             InlineKeyboardButton(
-                                text=f"{NEW_MENTOR_BUTTON_TEXT} (скоро)",
+                                text=f"{NEW_MENTOR_BUTTON_TEXT} (coming soon)",
                                 callback_data="buy_mentor",
                             )
                         ]
@@ -86,10 +136,13 @@ async def user_start(
                 )
                 await message.answer(NO_MENTORS_MESSAGE, reply_markup=kb)
             else:
+                # No active subscription, show welcome back message
                 await message.answer(
                     WELCOME_BACK_MESSAGE, reply_markup=ReplyKeyboardRemove()
                 )
         return
+    
+    # Handle new user registration
     await message.answer(
         WELCOME_HTML, parse_mode=ParseMode.HTML, reply_markup=ReplyKeyboardRemove()
     )
@@ -103,18 +156,37 @@ async def get_about_user(
     session: AsyncSession,
     repo: Repository,
 ) -> None:
-    # TODO сделать установку is_reg = True в конце
-    logger.info(message.text)
+    """
+    Process user background information and create their first AI mentor.
+    
+    This handler is triggered when a new user provides their background information
+    during the registration process. It:
+    - Sends the user's background to AI service to generate mentor personality
+    - Updates user profile with extracted information
+    - Creates a new mentor record in the database
+    - Initializes conversation state with the mentor's greeting
+    
+    Args:
+        message: The Telegram message containing user's background text
+        state: FSM context for managing conversation state
+        session: Database session for transaction management
+        repo: Database repository for data access
+    """
+    logger.info(f"Processing user background for user {message.from_user.id}")
+    
+    # Generate AI mentor based on user's background
     resp = await init_mentor(message.text)
     resp_json = json.loads(resp)
 
+    # Get user record and update with extracted information
     user = await repo.users.get(telegram_id=message.from_user.id)
     user.brief_background = resp_json["brief_background"]
     user.goal = resp_json["goal"]
-    user.is_reg = True
+    user.is_reg = True  # Mark user as registered
     await repo.users.update(user)
     await session.commit()
 
+    # Create new mentor record with AI-generated personality
     new_mentor = DBMentor(
         name=resp_json["name"],
         mentor_age=resp_json["mentor_age"],
@@ -128,6 +200,7 @@ async def get_about_user(
     await repo.mentors.create(new_mentor)
     await session.commit()
 
+    # Send mentor introduction to user
     await message.answer(
         AGENT_CREATED_TEMPLATE.format(
             name=resp_json["name"],
@@ -138,7 +211,11 @@ async def get_about_user(
         ),
         parse_mode=ParseMode.HTML,
     )
+    
+    # Switch to conversation mode
     await state.set_state(DialogueWithMentor.process)
+    
+    # Initialize conversation history with user's message and mentor's greeting
     conversation_history = [
         {"role": "user", "content": message.text},
         {"role": "assistant", "content": resp_json["greeting"]},
@@ -158,23 +235,41 @@ async def dialogue_process(
     session: AsyncSession,
     repo: Repository,
 ):
+    """
+    Process user messages during mentor conversation.
+    
+    This is the main conversation handler that:
+    - Validates user status and subscription
+    - Retrieves relevant conversation history using vector search
+    - Generates AI mentor responses
+    - Stores conversation data for future reference
+    - Manages conversation history length
+    
+    Args:
+        message: The Telegram message from the user
+        state: FSM context for conversation state management
+        session: Database session for transaction management
+        repo: Database repository for data access
+    """
     user_id = message.from_user.id
     user = await repo.users.get(telegram_id=user_id)
 
+    # Validate user exists
     if not user:
-        await message.answer(USER_NOT_FOUND)
-        await state.clear()
-        return
+        raise UserNotFoundError(telegram_id=str(user_id))
 
+    # Check if user is banned
     if user.is_ban:
-        await message.answer("Вы заблокированы")
-        await state.clear()
-        return
+        raise UserBannedError(user.id, str(user_id))
 
+    # Check subscription status and handle expiration
     if user.is_sub and user.sub_until and user.sub_until < datetime.utcnow():
+        # Subscription expired, update user status
         user.is_sub = False
         await repo.users.update(user)
         await session.commit()
+        
+        # Show subscription expired message with purchase option
         buy_kb = InlineKeyboardMarkup(
             inline_keyboard=[
                 [
@@ -192,11 +287,13 @@ async def dialogue_process(
         await state.clear()
         return
 
+    # Check free tier message limit for non-subscribers
     if not user.is_sub:
         message_quantity = await repo.conversations.count(user_id=user.id)
-        if message_quantity > 10:
+        if message_quantity > 10:  # Free tier limit
             config: Config = create_config()
             if config.provider_config.enabled:
+                # Show subscription purchase option
                 buy_kb = InlineKeyboardMarkup(
                     inline_keyboard=[
                         [
@@ -213,16 +310,17 @@ async def dialogue_process(
                     parse_mode=ParseMode.HTML,
                 )
             else:
+                # Payments disabled, show limit message
                 await message.answer(PAYMENTS_DISABLED_TEXT)
             await state.clear()
             return
 
+    # Get user's mentor
     mentor = await repo.mentors.get_by_user_id(user.id)
     if not mentor:
-        await message.answer(MENTOR_NOT_FOUND)
-        await state.clear()
-        return
+        raise MentorNotFoundError(user_id=user.id)
 
+    # Prepare mentor data for AI processing
     mentor_json = dict(
         name=mentor.name,
         mentor_age=mentor.mentor_age,
@@ -235,28 +333,42 @@ async def dialogue_process(
         goal=user.goal,
     )
 
+    # Get current conversation history from state
     user_data = await state.get_data()
     conversation_history = user_data.get("conversation_history", [])
+    
+    # Create embeddings for vector search and store user message
     embedding = await create_embeddings(message.text)
     similar_messages = retrieve_history(user_id, embedding, top_k=5)
     store_message(user_id, "user", message.text, embedding)
+    
+    # Build context from similar past messages
     context_history = (
         [{"role": "system", "content": "\n".join(similar_messages)}]
         if similar_messages
         else []
     )
+    
+    # Create dialogue keyboard with menu option
     dialogue_kb = ReplyKeyboardMarkup(
         keyboard=[[KeyboardButton(text="В меню")]], resize_keyboard=True
     )
+    
+    # Generate mentor response using AI
     resp = await reply_from_mentor(
         user_msg=message.text,
         conversation_history=context_history + conversation_history,
         mentor_json=json.dumps(mentor_json),
     )
+    
+    # Send mentor response to user
     await message.answer(resp, reply_markup=dialogue_kb)
+    
+    # Store assistant response in vector database
     resp_embedding = await create_embeddings(resp)
     store_message(user_id, "assistant", resp, resp_embedding)
 
+    # Update conversation history
     conversation_history.extend(
         [
             {"role": "user", "content": message.text},
@@ -264,6 +376,7 @@ async def dialogue_process(
         ]
     )
 
+    # Store conversation in database
     await repo.conversations.create_message(
         DBConversationMessage(user_id=user.id, role="user", content=message.text)
     )
@@ -271,7 +384,9 @@ async def dialogue_process(
         DBConversationMessage(user_id=user.id, role="assistant", content=resp)
     )
 
+    # Limit conversation history to prevent context overflow
     if len(conversation_history) > 20:
-        conversation_history = conversation_history[2:]
+        conversation_history = conversation_history[2:]  # Remove oldest messages
 
+    # Update state with new conversation history
     await state.update_data(conversation_history=conversation_history)

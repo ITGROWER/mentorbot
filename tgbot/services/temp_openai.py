@@ -1,9 +1,16 @@
+"""
+OpenAI service module for MentorBot.
+
+This module provides functions for interacting with OpenAI's API including
+mentor creation, conversation handling, and embedding generation.
+"""
+
 import os
 import httpx
 from httpx_socks import AsyncProxyTransport, SyncProxyTransport
 import openai
 from openai.types.responses import Response, ResponseUsage
-from langchain_openai import OpenAIEmbeddings  # Или другая модель для эмбеддингов
+from langchain_openai import OpenAIEmbeddings
 from langchain_community.vectorstores import Qdrant
 from qdrant_client import QdrantClient
 from langchain.chains import ConversationalRetrievalChain
@@ -12,6 +19,7 @@ from langchain_openai import ChatOpenAI
 from langchain.prompts import PromptTemplate
 
 from tgbot.misc.logger import logger
+from tgbot.misc.exceptions import OpenAIError, EmbeddingError, AIServiceError
 
 # MODEL = "gpt-4o-mini"
 # MODEL = "gpt-4-turbo"
@@ -32,75 +40,174 @@ client = openai.AsyncOpenAI(
 )
 
 
-async def init_mentor(user_msg: str):
-    messages = [
-        {
-            "role": "user",
-            "content": [
-                {
-                    "type": "input_text",
-                    "text": user_msg,
-                }
-            ],
-        },
-    ]
-    resp: Response = await client.responses.create(
-        prompt={
-            "id": "pmpt_687fdc2e9d988197b78d6d9ec73ed7b9007fa912406f701e",
-            "version": "9",
-        },
-        model=MODEL,
-        input=messages,
-        temperature=1,
-        max_output_tokens=512,  # limit output size
-    )
-    # print(resp)
-    content = resp.output_text
-    usage: ResponseUsage = resp.usage
-    cost = (usage.input_tokens * 2.50 + usage.output_tokens * 10.00) / 1_000_000
-    print(content)
-    logger.debug(f"\nUsed {usage.total_tokens} tokens, cost ≈ ${cost}")
-    return content
+async def init_mentor(user_msg: str) -> str:
+    """
+    Initialize a new AI mentor based on user's background information.
+    
+    This function uses OpenAI's API to generate a personalized mentor
+    personality based on the user's background and goals.
+    
+    Args:
+        user_msg: User's background information and goals
+        
+    Returns:
+        str: JSON string containing mentor data
+        
+    Raises:
+        OpenAIError: If OpenAI API call fails
+        AIServiceError: If mentor creation fails
+    """
+    try:
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": user_msg,
+                    }
+                ],
+            },
+        ]
+        
+        resp: Response = await client.responses.create(
+            prompt={
+                "id": "pmpt_687fdc2e9d988197b78d6d9ec73ed7b9007fa912406f701e",
+                "version": "9",
+            },
+            model=MODEL,
+            input=messages,
+            temperature=1,
+            max_output_tokens=512,  # limit output size
+        )
+        
+        content = resp.output_text
+        usage: ResponseUsage = resp.usage
+        cost = (usage.input_tokens * 2.50 + usage.output_tokens * 10.00) / 1_000_000
+        
+        logger.debug(f"Mentor creation: Used {usage.total_tokens} tokens, cost ≈ ${cost:.6f}")
+        
+        # Validate response format
+        try:
+            import json
+            json.loads(content)  # Validate JSON format
+        except json.JSONDecodeError as e:
+            raise AIServiceError(f"Invalid JSON response from OpenAI: {e}")
+        
+        return content
+        
+    except openai.APIError as e:
+        logger.error(f"OpenAI API error in init_mentor: {e}")
+        raise OpenAIError(f"OpenAI API error: {e}", api_error=str(e))
+    except Exception as e:
+        logger.error(f"Unexpected error in init_mentor: {e}")
+        raise AIServiceError(f"Failed to create mentor: {e}")
 
 
 async def reply_from_mentor(
-    user_msg: str, conversation_history: list, mentor_json: dict
-):
-    # TODO починить форматирование ответов
-    messages = [
-        {"role": "system", "content": mentor_json},
-    ]
-    messages.extend(conversation_history)
-    messages.append(
-        {
-            "role": "user",
-            "content": user_msg,
-        },
-    )
-    resp: Response = await client.responses.create(
-        model=MODEL,
-        prompt={
-            "id": "pmpt_6880ca9b0ed4819680b74f8820d725e10081c6a730e57326",
-            "version": "2",
-        },
-        input=messages,
-        temperature=1,
-        max_output_tokens=512,  # limit output size
-    )
-    content = resp.output_text
-    usage: ResponseUsage = resp.usage
-    cost = (usage.input_tokens * 0.15 + usage.output_tokens * 0.60) / 1_000_000
-    # print(content)
-    logger.debug(f"\nUsed {usage.total_tokens} tokens, cost ≈ ${cost:.6f}")
-    return content
+    user_msg: str, conversation_history: list, mentor_json: str
+) -> str:
+    """
+    Generate a mentor response based on user message and conversation history.
+    
+    This function uses OpenAI's API to generate contextual responses from
+    the AI mentor based on the conversation history and mentor personality.
+    
+    Args:
+        user_msg: User's message
+        conversation_history: List of previous conversation messages
+        mentor_json: JSON string containing mentor personality data
+        
+    Returns:
+        str: Mentor's response message
+        
+    Raises:
+        OpenAIError: If OpenAI API call fails
+        AIServiceError: If response generation fails
+    """
+    try:
+        messages = [
+            {"role": "system", "content": mentor_json},
+        ]
+        messages.extend(conversation_history)
+        messages.append(
+            {
+                "role": "user",
+                "content": user_msg,
+            },
+        )
+        
+        resp: Response = await client.responses.create(
+            model=MODEL,
+            prompt={
+                "id": "pmpt_6880ca9b0ed4819680b74f8820d725e10081c6a730e57326",
+                "version": "2",
+            },
+            input=messages,
+            temperature=1,
+            max_output_tokens=512,  # limit output size
+        )
+        
+        content = resp.output_text
+        usage: ResponseUsage = resp.usage
+        cost = (usage.input_tokens * 0.15 + usage.output_tokens * 0.60) / 1_000_000
+        
+        logger.debug(f"Mentor reply: Used {usage.total_tokens} tokens, cost ≈ ${cost:.6f}")
+        
+        # Validate response
+        if not content or not content.strip():
+            raise AIServiceError("Empty response from OpenAI")
+        
+        return content
+        
+    except openai.APIError as e:
+        logger.error(f"OpenAI API error in reply_from_mentor: {e}")
+        raise OpenAIError(f"OpenAI API error: {e}", api_error=str(e))
+    except Exception as e:
+        logger.error(f"Unexpected error in reply_from_mentor: {e}")
+        raise AIServiceError(f"Failed to generate mentor response: {e}")
 
 
-async def create_embeddings(text: str):
-    embeddings = OpenAIEmbeddings(
-        openai_api_key=os.environ["OPENAI_API_KEY"],
-        http_client=client_http_sync,  # Синхронный клиент для эмбеддингов
-    )
-    return embeddings.embed_query(text)
+async def create_embeddings(text: str) -> list[float]:
+    """
+    Create embeddings for the given text using OpenAI's embedding model.
+    
+    This function generates vector embeddings for text that can be used
+    for semantic search and similarity matching.
+    
+    Args:
+        text: Text to create embeddings for
+        
+    Returns:
+        list[float]: Vector embeddings as a list of floats
+        
+    Raises:
+        EmbeddingError: If embedding creation fails
+        AIServiceError: If OpenAI API call fails
+    """
+    try:
+        if not text or not text.strip():
+            raise EmbeddingError("Empty text provided for embedding", text=text)
+        
+        embeddings = OpenAIEmbeddings(
+            openai_api_key=os.environ["OPENAI_API_KEY"],
+            http_client=client_http_sync,  # Синхронный клиент для эмбеддингов
+        )
+        
+        result = embeddings.embed_query(text)
+        
+        if not result or not isinstance(result, list):
+            raise EmbeddingError("Invalid embedding result", text=text)
+        
+        logger.debug(f"Created embeddings for text: {text[:50]}...")
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error creating embeddings: {e}")
+        if isinstance(e, EmbeddingError):
+            raise
+        else:
+            raise EmbeddingError(f"Failed to create embeddings: {e}", text=text)
 
 
 async def reply_from_mentor_with_rag(
